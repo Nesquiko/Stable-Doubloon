@@ -44,6 +44,7 @@ contract StableDoubloonEngine is ReentrancyGuard {
     address[] private collateralTokens;
 
     event CollateralDeposited(address indexed user, address indexed collateral, uint256 indexed amount);
+    event CollateralRedeemed(address indexed user, address indexed collateral, uint256 indexed amount);
 
     modifier nonZero(uint256 amount) {
         if (amount == 0) {
@@ -71,14 +72,23 @@ contract StableDoubloonEngine is ReentrancyGuard {
         sd = StableDoubloon(sdAddress);
     }
 
-    function depositCollateralAndMint() external {}
+    /*
+     * @param collateral address of the token to deposit as collateral
+     * @param amountCollateral the amount to deposit
+     * @param amountSd the amount of SD to mint
+     * @notice this function will deposit collateral and mint SD in one transaction
+     */
+    function depositCollateralAndMint(address collateral, uint256 amountCollateral, uint256 amountSd) external {
+        depositCollateral(collateral, amountCollateral);
+        mint(amountSd);
+    }
 
     /**
      * @param collateral address of the token to deposit as collateral
      * @param amount the amount to deposit
      */
     function depositCollateral(address collateral, uint256 amount)
-        external
+        public
         isAllowedAsCollateral(collateral)
         nonZero(amount)
         nonReentrant
@@ -93,13 +103,39 @@ contract StableDoubloonEngine is ReentrancyGuard {
         }
     }
 
-    function redeemCollateral() external {}
+    /*
+     * @param collateral address of the token to redeem
+     * @param amount the amount to redeem
+     * @param amountSd the amount of SD to burn
+     * @notice this function will redeem collateral and burn SD in one transaction
+     */
+    function redeemCollateralAndBurn(address collateral, uint256 amount, uint256 amountSd) external {
+        burn(amountSd);
+        redeemCollateral(collateral, amount);
+    }
+
+    /*
+     * @notice health factor must be above 1 after redeeming collateral
+     */
+    function redeemCollateral(address collateral, uint256 amount) public nonZero(amount) nonReentrant {
+        // if the user has less collateral than the amount they want to redeem,
+        // solidity will revert
+        collateralDeposits[msg.sender][collateral] -= amount;
+        emit CollateralRedeemed(msg.sender, collateral, amount);
+
+        bool success = IERC20(collateral).transfer(msg.sender, amount);
+        if (!success) {
+            revert StableDoubloonEngine__TransferFailed();
+        }
+
+        revertOnBadHealthFactor(msg.sender);
+    }
 
     /**
      * @param amount the amount of SD to mint
      * @notice requester must have more collateral value than the minimum threshold
      */
-    function mint(uint256 amount) external nonZero(amount) nonReentrant {
+    function mint(uint256 amount) public nonZero(amount) nonReentrant {
         sdMinted[msg.sender] += amount;
         revertOnBadHealthFactor(msg.sender);
 
@@ -109,7 +145,14 @@ contract StableDoubloonEngine is ReentrancyGuard {
         }
     }
 
-    function burn() external {}
+    function burn(uint256 amount) public nonZero(amount) {
+        sdMinted[msg.sender] -= amount;
+        bool success = sd.transferFrom(msg.sender, address(this), amount);
+        if (!success) {
+            revert StableDoubloonEngine__TransferFailed();
+        }
+        sd.burn(amount);
+    }
 
     function liquidate() external {}
 

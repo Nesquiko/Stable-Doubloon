@@ -10,10 +10,10 @@ contract DeploySD is Script {
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
 
-    function run() external returns (StableDoubloon, StableDoubloonEngine) {
+    function run() external returns (StableDoubloon, StableDoubloonEngine, DeployConfig) {
         DeployConfig config = new DeployConfig();
 
-        (address wETHPriceFeed, address wBTCPriceFeed, address wETH, address wBTC, uint256 deployerPK) =
+        (address wETH, address wBTC, address wETHPriceFeed, address wBTCPriceFeed, uint256 deployerPK) =
             config.activeConfig();
         tokenAddresses = [wETH, wBTC];
         priceFeedAddresses = [wETHPriceFeed, wBTCPriceFeed];
@@ -27,6 +27,6 @@ contract DeploySD is Script {
         );
         sd.transferOwnership(address(engine));
         vm.stopBroadcast();
-        return (sd, engine);
+        return (sd, engine, config);
     }
 }
