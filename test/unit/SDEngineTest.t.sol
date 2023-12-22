@@ -13,16 +13,26 @@ contract SDEngineTest is Test {
     StableDoubloon sd;
     StableDoubloonEngine engine;
     DeployConfig config;
-    address wETHUsdPriceFeed;
     address wETH;
+    address wBTC;
+    address wETHUsdPriceFeed;
+    address wBTCUsdPriceFeed;
     address user;
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
+
+    modifier depositCollateral() {
+        vm.startPrank(user);
+        ERC20Mock(wETH).approve(address(engine), AMOUNT_COLLATERAL);
+        engine.depositCollateral(wETH, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+        _;
+    }
 
     function setUp() public {
         user = makeAddr("user");
         deployer = new DeploySD();
         (sd, engine, config) = deployer.run();
-        (wETH,, wETHUsdPriceFeed,,) = config.activeConfig();
+        (wETH, wBTC, wETHUsdPriceFeed, wBTCUsdPriceFeed,) = config.activeConfig();
         ERC20Mock(wETH).mint(address(user), AMOUNT_COLLATERAL);
     }
 
@@ -39,5 +49,42 @@ contract SDEngineTest is Test {
         vm.expectRevert(StableDoubloonEngine.StableDoubloonEngine__NonZeroAmountRequired.selector);
         engine.depositCollateral(wETH, 0);
         vm.stopPrank();
+    }
+
+    address[] public tokens;
+    address[] public priceFeeds;
+
+    function testRevertIfIncorrectConstructionCall() public {
+        tokens.push(wETH);
+        priceFeeds.push(wETHUsdPriceFeed);
+        priceFeeds.push(wBTCUsdPriceFeed);
+
+        vm.expectRevert(StableDoubloonEngine.StableDoubloonEngine__InvalidConstructorArgs.selector);
+        new StableDoubloonEngine(address(sd), tokens, priceFeeds);
+    }
+
+    function testGetTokemAmountFromUsd() public {
+        uint256 usdAmount = 100 ether;
+        uint256 expectedWeth = 0.05 ether;
+
+        uint256 actualValue = engine.getTokenAmountFromUsd(wETH, usdAmount);
+        assertEq(actualValue, expectedWeth);
+    }
+
+    function testRevertsUnapprovedCollateral() public {
+        ERC20Mock randomToken = new ERC20Mock();
+        vm.startPrank(user);
+        vm.expectRevert(StableDoubloonEngine.StableDoubloonEngine__TokenNotAllowed.selector);
+        engine.depositCollateral(address(randomToken), AMOUNT_COLLATERAL);
+        vm.stopPrank();
+    }
+
+    function testDepositCollateralAndGetAccountInfo() public depositCollateral {
+        (uint256 totalSDMinted, uint256 collValInUsd) = engine.getAccountInfo(user);
+
+        uint256 expectedTotalSDMinted = 0;
+        uint256 expectedDepositAmount = engine.getTokenAmountFromUsd(wETH, collValInUsd);
+        assertEq(totalSDMinted, expectedTotalSDMinted);
+        assertEq(AMOUNT_COLLATERAL, expectedDepositAmount);
     }
 }

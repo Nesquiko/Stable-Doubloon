@@ -198,12 +198,16 @@ contract StableDoubloonEngine is ReentrancyGuard {
 
     /// Returns how close to liquidation a user is.
     function healthFactor(address user) internal view returns (uint256) {
-        (uint256 totalSDMinted, uint256 collateralValueUSD) = getAccountInfo(user);
+        (uint256 totalSDMinted, uint256 collateralValueUSD) = _getAccountInfo(user);
         uint256 collateralAdjusted = (collateralValueUSD * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
         return (collateralAdjusted * PRECISION) / totalSDMinted;
     }
 
-    function getAccountInfo(address user) internal view returns (uint256 totalSDMinted, uint256 collateralValueUSD) {
+    function getAccountInfo(address user) external view returns (uint256 totalSDMinted, uint256 collateralValueUSD) {
+        return _getAccountInfo(user);
+    }
+
+    function _getAccountInfo(address user) internal view returns (uint256 totalSDMinted, uint256 collateralValueUSD) {
         totalSDMinted = sdMinted[user];
         collateralValueUSD = getAccountCollateralValueUSD(user);
         return (totalSDMinted, collateralValueUSD);
