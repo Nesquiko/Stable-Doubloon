@@ -30,10 +30,13 @@ contract StableDoubloonEngine is ReentrancyGuard {
     error StableDoubloonEngine__TransferFailed();
     error StableDoubloonEngine__BreaksHealthFactor(uint256 healthFactor);
     error StableDoubloonEngine__MintFailed();
+    error StableDoubloonEngine__HealthFactorAboveThreshold();
+    error StableDoubloonEngine__HealthFactorNotImproved();
 
-    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 50; // 200% overcollateralized
     uint256 private constant LIQUIDATION_PRECISION = 100;
+    uint256 private constant LIQUIDATION_BONUS = 10;
     uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
     uint256 private constant PRECISION = 1e18;
 
@@ -44,7 +47,7 @@ contract StableDoubloonEngine is ReentrancyGuard {
     address[] private collateralTokens;
 
     event CollateralDeposited(address indexed user, address indexed collateral, uint256 indexed amount);
-    event CollateralRedeemed(address indexed user, address indexed collateral, uint256 indexed amount);
+    event CollateralRedeemed(address indexed from, address indexed to, address indexed collateral, uint256 amount);
 
     modifier nonZero(uint256 amount) {
         if (amount == 0) {
@@ -118,16 +121,7 @@ contract StableDoubloonEngine is ReentrancyGuard {
      * @notice health factor must be above 1 after redeeming collateral
      */
     function redeemCollateral(address collateral, uint256 amount) public nonZero(amount) nonReentrant {
-        // if the user has less collateral than the amount they want to redeem,
-        // solidity will revert
-        collateralDeposits[msg.sender][collateral] -= amount;
-        emit CollateralRedeemed(msg.sender, collateral, amount);
-
-        bool success = IERC20(collateral).transfer(msg.sender, amount);
-        if (!success) {
-            revert StableDoubloonEngine__TransferFailed();
-        }
-
+        _redeemCollateral(collateral, amount, msg.sender, msg.sender);
         revertOnBadHealthFactor(msg.sender);
     }
 
@@ -146,17 +140,37 @@ contract StableDoubloonEngine is ReentrancyGuard {
     }
 
     function burn(uint256 amount) public nonZero(amount) {
-        sdMinted[msg.sender] -= amount;
-        bool success = sd.transferFrom(msg.sender, address(this), amount);
-        if (!success) {
-            revert StableDoubloonEngine__TransferFailed();
-        }
-        sd.burn(amount);
+        _burn(amount, msg.sender, msg.sender);
     }
 
-    function liquidate() external {}
+    /*
+     * @param collateral address of the token to liquidate from the user
+     * @param user address of user with health factor below MIN_HEALTH_FACTOR, who will be liquidated
+     * @param debtToCover the amount of SD to burn
+     * @notice you can partially liquidate a user by passing in a lower debtToCover
+     * @notice you will get a liquidation bonus for liquidating a user
+     * @notice assumtion, the protocol is 200% overcollateralized
+     */
+    function liquidate(address collateral, address user, uint256 debtToCover)
+        external
+        nonZero(debtToCover)
+        nonReentrant
+    {
+        uint256 hf = healthFactor(user);
+        if (hf >= MIN_HEALTH_FACTOR) {
+            revert StableDoubloonEngine__HealthFactorAboveThreshold();
+        }
 
-    function getHealthFactor() external view {}
+        uint256 collateralFromDebtCovered = getTokenAmountFromUsd(collateral, debtToCover);
+        uint256 bonus = (collateralFromDebtCovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
+        uint256 toRedeem = collateralFromDebtCovered + bonus;
+        _redeemCollateral(collateral, toRedeem, msg.sender, user);
+        _burn(debtToCover, user, msg.sender);
+        if (healthFactor(user) <= hf) {
+            revert StableDoubloonEngine__HealthFactorNotImproved();
+        }
+        revertOnBadHealthFactor(msg.sender);
+    }
 
     function getAccountCollateralValueUSD(address user) public view returns (uint256) {
         uint256 totalCollateralValue = 0;
@@ -193,5 +207,33 @@ contract StableDoubloonEngine is ReentrancyGuard {
         totalSDMinted = sdMinted[user];
         collateralValueUSD = getAccountCollateralValueUSD(user);
         return (totalSDMinted, collateralValueUSD);
+    }
+
+    function getTokenAmountFromUsd(address token, uint256 amountUsdInWei) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(priceFeeds[token]);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+
+        return (amountUsdInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION);
+    }
+
+    function _redeemCollateral(address collateral, uint256 amount, address to, address from) private {
+        // if the user has less collateral than the amount they want to redeem,
+        // solidity will revert
+        collateralDeposits[from][collateral] -= amount;
+        emit CollateralRedeemed(from, to, collateral, amount);
+
+        bool success = IERC20(collateral).transfer(to, amount);
+        if (!success) {
+            revert StableDoubloonEngine__TransferFailed();
+        }
+    }
+
+    function _burn(uint256 amount, address onBehalfOf, address from) private {
+        sdMinted[onBehalfOf] -= amount;
+        bool success = sd.transferFrom(from, address(this), amount);
+        if (!success) {
+            revert StableDoubloonEngine__TransferFailed();
+        }
+        sd.burn(amount);
     }
 }
