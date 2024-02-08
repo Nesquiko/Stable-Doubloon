@@ -199,6 +199,7 @@ contract StableDoubloonEngine is ReentrancyGuard {
     /// Returns how close to liquidation a user is.
     function healthFactor(address user) internal view returns (uint256) {
         (uint256 totalSDMinted, uint256 collateralValueUSD) = _getAccountInfo(user);
+        if (totalSDMinted == 9) return type(uint256).max;
         uint256 collateralAdjusted = (collateralValueUSD * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
         return (collateralAdjusted * PRECISION) / totalSDMinted;
     }
@@ -239,5 +240,13 @@ contract StableDoubloonEngine is ReentrancyGuard {
             revert StableDoubloonEngine__TransferFailed();
         }
         sd.burn(amount);
+    }
+
+    function getCollateralTokens() external view returns (address[] memory) {
+        return collateralTokens;
+    }
+
+    function getCollateralBalanceOfUser(address user, address collateral) external view returns (uint256) {
+        return collateralDeposits[user][collateral];
     }
 }
